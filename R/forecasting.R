@@ -105,6 +105,10 @@ forecast.one <- function(forecaster, timeseries){
   # Unifies data
   actual <- as.vector(actual)
   forecast <- as.vector(forecast)
+  print(actual)
+  print(forecast)
+  message(actual)
+  message(forecast)
 
   return(calculateMeasures(end, start, hist, forecast, actual, 1))
 }
@@ -131,6 +135,10 @@ forecast.multi <- function(forecaster, timeseries){
   # Unifies data
   actual <- as.vector(actual)
   forecast <- as.vector(forecast)
+  print(actual)
+  print(forecast)
+  message(actual)
+  message(forecast)
 
   return(calculateMeasures(end, start, hist, forecast, actual, horizon))
 }
