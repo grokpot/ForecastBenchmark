@@ -16,8 +16,15 @@
 # https://machinelearningmastery.com/encoder-decoder-attention-sequence-to-sequence-prediction-keras/
 # https://www.altumintelligence.com/articles/a/Time-Series-Prediction-Using-LSTM-Deep-Neural-Networks
 
+DEBUG = FALSE
+IS_COLAB = TRUE
 
-setwd("/Users/prater/Dev/ForecastBenchmark")
+if (IS_COLAB) {
+    setwd(".")
+    
+} else {
+    setwd("/Users/prater/Dev/ForecastBenchmark")
+}
 source("R/benchmark.R")
 source("R/forecasting.R")
 source("R/measures.R")
@@ -26,8 +33,6 @@ library(forecast)
 library(keras)
 library(caret)
 library(xts)
-
-DEBUG = FALSE
 
 p <- function(msg, val) {
     if (DEBUG) {
@@ -41,7 +46,7 @@ get_scale_factors <- function(x) {
     if (SCALER == "minmax") {
         return (c(min(x), max(x)))
     } else {
-        return (c(mean(tsd), sd(tsd)))
+        return (c(mean(x), sd(x)))
     }
 }
 scale <- function(x, scale_factors) {
@@ -63,9 +68,13 @@ unscale <- function(x, scale_factors) {
 
 
 lstm <- function(tsd, h) {
+    # TO TEST #
+    # - num units as a fixed number or as a factor of input
+    
     ## TODO ##
     # - check if model input is in the correct form (RxC vs CxR)
     # - try a different use case
+    # - remove internal testing, make sequence 100% training and use validation split
     
     
     p("TSD Length: ", length(tsd))
@@ -73,16 +82,22 @@ lstm <- function(tsd, h) {
     p("TSD End: ", end(tsd))
     p("TSD Frequency: ", frequency(tsd))
     p("H: ", h)
-
+    
     # In case of predictors that translates to an array of dimensions: (nrow(data) – lag – h + 1, h, 1), where lag = h.
     # lag <- h
     
     # lookback = .01 * length(tsd)
+    IS_PROD = TRUE
     lookback = h
     horizon = h
-    num_samples = 200
+    num_samples = 500
     tt_split = .7
     
+    if (IS_PROD) {
+        tt_split = 1
+    } else {
+        tt_split = tt_split
+    }
     ## TRAIN
     split_idx = round(tt_split * length(tsd))
     
@@ -91,10 +106,10 @@ lstm <- function(tsd, h) {
     scale_factors <- get_scale_factors(train_arr)
     tsd_scaled <- sapply(tsd, scale, scale_factors=scale_factors)
     
-    start_indexes <- seq(1, split_idx, length.out=num_samples)
-    train_mtx<- matrix(nrow = length(start_indexes), ncol = (lookback + horizon))
-    for (i in 1:length(start_indexes)){
-        train_mtx[i,] <- tsd_scaled[start_indexes[i]:(start_indexes[i] + (lookback + horizon) - 1)]
+    train_seq_indexes <- seq(1, split_idx, length.out=num_samples)
+    train_mtx<- matrix(nrow = length(train_seq_indexes), ncol = (lookback + horizon))
+    for (i in 1:length(train_seq_indexes)){
+        train_mtx[i,] <- tsd_scaled[train_seq_indexes[i]:(train_seq_indexes[i] + (lookback + horizon) - 1)]
     }
     # make sure it's numeric
     train_mtx <- train_mtx * 1
@@ -104,82 +119,32 @@ lstm <- function(tsd, h) {
     }
     # Split data into input (X) and output (y)
     X_train = train_mtx[,1:lookback]
-    dim(X_train) = c(nrow(X_train), ncol(X_train), 1)
+    X_train = array(X_train, dim=c(nrow(X_train), ncol(X_train), 1))
     y_train = train_mtx[,(lookback+1):ncol(train_mtx)]
-    dim(y_train) = c(nrow(y_train), ncol(y_train), 1)
+    y_train = array(y_train, dim=c(nrow(y_train), ncol(y_train), 1))
     
-    
-    ## TEST
-    # Do NOT compute scale factors here
-    
-    start_indexes <- seq(1, split_idx, length.out=(tt_split * num_samples))
-    test_mtx<- matrix(nrow = length(start_indexes), ncol = (lookback + horizon))
-    for (i in 1:length(start_indexes)){
-        test_mtx[i,] <- tsd_scaled[start_indexes[i]:(start_indexes[i] + (lookback + horizon) - 1)]
-    }
-    # make sure it's numeric
-    test_mtx <- test_mtx * 1
-    # remove na's if you have them
-    if(anyNA(test_mtx)){
-        test_mtx <- na.omit(test_mtx)
-    }
-    # Split data into input (X) and output (y)
-    X_test <- test_mtx[,1:lookback]
-    y_test <- test_mtx[,(lookback+1):ncol(test_mtx)]
-    
+    ## TEST - DONT IMMEDIATELY DELETE
+    # # Do NOT compute scale factors here
+    # test_seq_indexes <- seq(split_idx + 1, (length(tsd_scaled) - lookback - horizon), length.out=(tt_split * num_samples))
+    # test_mtx<- matrix(nrow = length(test_seq_indexes), ncol = (lookback + horizon))
+    # for (i in 1:length(test_seq_indexes)){
+    #     test_mtx[i,] <- tsd_scaled[test_seq_indexes[i]:(test_seq_indexes[i] + (lookback + horizon) - 1)]
+    # }
+    # # make sure it's numeric
+    # test_mtx <- test_mtx * 1
+    # # remove na's if you have them
+    # if(anyNA(test_mtx)){
+    #     test_mtx <- na.omit(test_mtx)
+    # }
+    # # Split data into input (X) and output (y)
+    # X_test <- test_mtx[,1:lookback]
+    # y_test <- test_mtx[,(lookback+1):ncol(test_mtx)]
+    # 
     
     ts_scaled = ts(tsd_scaled, start=start(tsd), end=end(tsd), frequency=frequency(tsd))
-    ts_train = subset(ts_scaled, start=(1), end=(split_idx))
-    ts_test = subset(ts_scaled, start=(split_idx), end=(length(tsd)))
-    autoplot(ts_scaled) + autolayer(ts_train) + autolayer(ts_test)
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    # scale_factors <- get_scale_factors(tsd)
-    # scaled <- sapply(tsd, scale, scale_factors=scale_factors)
-    # # scaled = tsd
-    # p("Scale Factors: ", scale_factors)
-    # 
-    # # https://www.kaggle.com/rtatman/beginner-s-intro-to-rnn-s-in-r
-    # # https://stats.stackexchange.com/questions/7757/data-normalization-and-standardization-in-neural-networks
-    # # get a list of start indexes for our (overlapping) chunks
-    # # start_indexes <- seq(1, length(scaled) - lookback - horizon, by=(.001*length(scaled)))
-    # start_indexes <- seq(1, length(scaled) - lookback - horizon, length.out=200)
-    # # create an empty matrix to store our data in
-    # data_matrix<- matrix(nrow = length(start_indexes), ncol = (lookback + horizon))
-    # # fill our matrix with the overlapping slices of our dataset
-    # for (i in 1:length(start_indexes)){
-    #     data_matrix[i,] <- scaled[start_indexes[i]:(start_indexes[i] + (lookback + horizon) - 1)]
-    # }
-    # 
-    # # make sure it's numeric
-    # data_matrix <- data_matrix * 1
-    # # remove na's if you have them
-    # if(anyNA(data_matrix)){
-    #     data_matrix <- na.omit(data_matrix)
-    # }
-    # 
-    # # Split data into input (X) and output (y)
-    # X <- matrix(data_matrix[,1:lookback])
-    # y <- matrix(data_matrix[,(lookback+1):ncol(data_matrix)])
-    # # create an index to split our data into testing & training sets
-    # 
-    # # training data
-    # split_idx = round(.9 * nrow(data_matrix))
-    # X_train = array(X[1:split_idx,], dim = c(split_idx, lookback, 1))
-    # y_train = array(y[1:split_idx,], dim = c(split_idx, horizon, 1))
-    # # testing data
-    # X_test = array(X[(split_idx + 1):nrow(data_matrix),], dim = c((nrow(data_matrix) - split_idx), lookback, 1))
-    # y_test = array(y[(split_idx + 1):nrow(data_matrix),], dim = c((nrow(data_matrix) - split_idx), horizon, 1))
-    # 
-    
-    
+    train_ts = subset(ts_scaled, start=(1), end=(split_idx))
+    test_ts = subset(ts_scaled, start=(split_idx + 1), end=(length(tsd)))
+    autoplot(ts_scaled) + autolayer(train_ts) + autolayer(test_ts)
     
     ### Model Definition
     # https://stackoverflow.com/questions/38714959/understanding-keras-lstms
@@ -206,22 +171,24 @@ lstm <- function(tsd, h) {
     #     # https://stackoverflow.com/questions/53663407/keras-lstm-different-input-output-shape
     #     time_distributed(keras::layer_dense(units = 1))
     
+    num_units = 128
     lstm_model <- keras_model_sequential()
     lstm_model %>%
         layer_lstm(
-            units = 64, # size of the layer
+            units = num_units, # size of the layer
             input_shape = c(lookback, 1),
-            # batch_input_shape = c(batch_size, lookback, 1), # batch size, timesteps, features
-            # batch_size=1,
-            # input_shape=c(NULL, 1),
             return_sequences = TRUE,
-            # activation='softmax'
+            # selu
+            activation='selu'
         ) %>%
+        # layer_dense(units=30, activation = 'selu') %>%
+        layer_dropout(rate = 0.5) %>%
+        layer_dense(units=(num_units / 2)) %>%
         time_distributed(keras::layer_dense(units = 1))
     
     
     lstm_model %>%
-        compile(loss = "mape", optimizer = "adam",)
+        compile(loss = "mse", optimizer = "adam",)
     summary(lstm_model)
     
     ### Training
@@ -229,32 +196,35 @@ lstm <- function(tsd, h) {
         x = X_train,
         y = y_train,
         # batch_size = batch_size,
-        epochs = 200,
+        epochs = 100,
         verbose = 0,
         shuffle = FALSE,
         validation_split=.1
     )
     
-    ts_scaled = ts(scaled, start=start(tsd), end=end(tsd), frequency=frequency(tsd))
-    
-    ### Test Prediction
-    ts_x_pred = subset(ts_scaled, start=(length(ts_scaled) - lookback - horizon + 1), end=(length(scaled) - horizon))
-    # ts_x_pred = subset(ts_scaled, start=20, end=(20+lookback))
-    ts_y_actual = subset(ts_scaled, start=(length(scaled) - horizon), end=(length(scaled)))
-    # ts_y_actual = subset(ts_scaled, start=(20+lookback), end=(20+lookback+horizon))
-    x_pred = array(data = ts_x_pred, dim = c(1, lookback, 1))
-    y_pred = predict(lstm_model, x_pred, batch_size = 1) %>% .[, , 1]
-    ts_y_pred = ts(y_pred, start=start(ts_y_actual), end=end(ts_y_actual), frequency=frequency(ts_y_actual))
-    autoplot(ts_scaled) + autolayer(ts_x_pred) + autolayer(ts_y_actual) + autolayer(ts_y_pred)
+    # ### Test Prediction 1
+    # offset = 100
+    # ts_x_pred = subset(ts_scaled, start=(length(ts_scaled) - lookback - horizon + 1 - offset), end=(length(ts_scaled) - horizon - offset))
+    # # ts_x_pred = subset(ts_scaled, start=20, end=(20+lookback))
+    # ts_a_pred = subset(ts_scaled, start=(length(ts_scaled) - horizon + 1 - offset), end=(length(ts_scaled) - offset))
+    # # ts_y_actual = subset(ts_scaled, start=(20+lookback), end=(20+lookback+horizon))
+    # x_pred = array(data = ts_x_pred, dim = c(1, lookback, 1))
+    # y_pred = predict(lstm_model, x_pred, batch_size = 1) %>% .[, , 1]
+    # ts_y_pred = ts(y_pred, start=start(ts_a_pred), end=end(ts_a_pred), frequency=frequency(ts_a_pred))
+    # autoplot(ts_scaled) + autolayer(ts_x_pred) + autolayer(ts_a_pred) + autolayer(ts_y_pred)
+    # 
+    # ### Test Prediction 2
+    # test_x = array(data = test_ts[1:lookback], dim = c(1, lookback, 1))
+    # predict(lstm_model, test_x, batch_size = 1) %>% .[, , 1]
+    # # ts_y_pred = ts(y_pred, start=1, end=lookback, frequency=frequency(tsd_scaled))
     
     ### Actual Prediction:
-    ts_x_pred = subset(ts_scaled, start=(length(ts_scaled) - lookback + 1), end=(length(scaled)))
-    x_pred = array(data = ts_x_pred, dim = c(1, lookback, 1))
+    x_pred = array(data = tsd_scaled[(length(tsd_scaled) - lookback + 1): length(tsd_scaled)], dim = c(1, lookback, 1))
     y_pred <- predict(lstm_model, x_pred, batch_size = 1) %>% .[, , 1]
     # Unscale
     y_pred_unscaled <- sapply(y_pred, unscale, scale_factors=scale_factors)
-
+    
     return(y_pred_unscaled)
 }
 
-benchmark(lstm, usecase = "human", type = "multi", output = "/Users/prater/Dev/ForecastBenchmark/results/output.csv")
+benchmark(lstm, usecase = "nature", type = "one", output = "./results/output.csv")
