@@ -18,7 +18,7 @@
 
 DEBUG = TRUE
 IS_COLAB = FALSE
-IS_PROD = FALSE
+IS_PROD = TRUE
 
 if (IS_COLAB) {
     setwd(".")
@@ -47,7 +47,7 @@ p <- function(msg, val) {
 }
 
 
-SCALER = "second"
+SCALER = "zscore"
 get_scale_factors <- function(x) {
     if (SCALER == "minmax") {
         return (c(min(x), max(x)))
@@ -100,30 +100,31 @@ lstm <- function(ts_input, h) {
     p("TSD Frequency: ", frequency(ts_input))
     p("H: ", h)
     
-    horizon = h
-    lookback = horizon
-    # # lookback = as.integer(.3 * length(ts_input))
-    # num_samples = length(ts_input) / 2
     if (IS_PROD) {
         tt_split = 1
-        build_test = FALSE
     } else {
         tt_split = .9
-        build_test = TRUE
+        # Uncomment to test with different dataset
+        ts_input <- ts(ggplot2::economics$unemploy,
+                       start = c(1967, 7),
+                       end = c(2015, 4),
+                       frequency = 12)
+        h = 12
     }
-    
-    # Uncomment to test with different dataset
-    ts_input <- ts(ggplot2::economics$unemploy,
-                   start = c(1967, 7),
-                   end = c(2015, 4),
-                   frequency = 12)
-    
     input = as.array(ts_input)
+    
+    horizon = h
+    lookback = horizon
+    # lookback = as.integer(1*h)
+    # lookback = as.integer(.1 * length(ts_input))
     
     #### BUILD TRAIN
     # Get scale factors
     split_idx = as.integer(tt_split * length(input))
+    # Scale factors from entire input
     scale_factors <- get_scale_factors(input[1:length(input)])
+    # Scale factors from training data
+    # scale_factors <- get_scale_factors(input[1:split_idx])
 
     # Create scaled versions of input data    
     ts_input_scaled = ts(sapply(input, scale, scale_factors=scale_factors), start=start(ts_input), end=end(ts_input), frequency=frequency(ts_input))
@@ -135,7 +136,10 @@ lstm <- function(ts_input, h) {
     ts_train_scaled = subset(ts_input_scaled, start=1, end=split_idx)
     train_scaled = as.array(ts_train_scaled)
 
-    train_idxs <- seq(1, split_idx, by=(lookback))
+    # Determine number of samples
+    train_idxs <- seq(1, split_idx, length.out=(2*length(input)))
+    # train_idxs <- seq(1, split_idx, by=(as.integer(0.01 * length(ts_input))))
+    
     train_mtx<- matrix(nrow = length(train_idxs), ncol = (lookback + horizon))
     for (i in 1:length(train_idxs)){
         train_mtx[i,] <- input_scaled[train_idxs[i]:(train_idxs[i] + (lookback + horizon) - 1)]
@@ -156,7 +160,9 @@ lstm <- function(ts_input, h) {
     p("Num samples: ", nrow(X_train))
     
     #### BUILD TEST
-    if (build_test) {
+    if (IS_PROD) {
+        x_test_scaled = input_scaled[(length(input_scaled) - lookback + 1) : length(input_scaled)]
+    } else {
         ts_test = subset(ts_input, start=(split_idx + 1), end=(length(ts_input)))
         test = as.array(ts_test)
         ts_test_scaled = subset(ts_input_scaled, start=(split_idx + 1), end=(length(ts_input)))
@@ -164,9 +170,9 @@ lstm <- function(ts_input, h) {
         
         offset = 20
         y_test_end_idx = length(test_scaled) - offset
-        y_test_start_idx = y_test_end_idx - horizon
-        x_test_end_idx = y_test_start_idx - 1
-        x_test_start_idx = x_test_end_idx - lookback
+        y_test_start_idx = y_test_end_idx - horizon + 1
+        x_test_end_idx = y_test_start_idx
+        x_test_start_idx = x_test_end_idx - lookback + 1
         
         ts_x_test = subset(ts_test, start=x_test_start_idx, end=x_test_end_idx)
         x_test = as.array(ts_x_test)
@@ -181,79 +187,61 @@ lstm <- function(ts_input, h) {
         y_test_scaled = as.array(ts_y_test_scaled)
         # Check that lengths are all equal
         stopifnot(length(unique(c(length(ts_y_test), length(y_test), length(ts_y_test_scaled), length(y_test_scaled))))==1)
-        
-        X_test <- array(
-            data = x_test,
-            dim = c(
-                1,
-                lookback,
-                1
-            )
-        )
+        # Plot train/test split
+        autoplot(ts_input) + autolayer(ts_train) + autolayer(ts_test)
+        autoplot(ts_input_scaled) + autolayer(ts_train_scaled) + autolayer(ts_test_scaled)
     }
-    
-    # Plot train/test split
-    autoplot(ts_input) + autolayer(ts_train) + autolayer(ts_test)
-    autoplot(ts_input_scaled) + autolayer(ts_train_scaled) + autolayer(ts_test_scaled)
-    
-    
+    X_test <- array(
+        data = x_test_scaled,
+        dim = c(1, lookback, 1)
+    )
  
     #### Model Definition
     # https://stackoverflow.com/questions/38714959/understanding-keras-lstms
     # https://keras.io/api/layers/activations/
     # https://stackoverflow.com/questions/53663407/keras-lstm-different-input-output-shape
-    num_epochs = 150
-    # batch_size = nrow(X_train)
+    num_epochs = 300
+    num_units = 64
+    batch_size = 1 # lower = better accuracy
     lstm_model <- keras_model_sequential()
     
     #### ENCODER / DECODER
     lstm_model %>%
         layer_lstm(
-            units = lookback,
+            units = num_units,
             input_shape = c(lookback, 1),
-            # batch_input_shape = c(1, lookback, 1),
-            return_sequences = FALSE,
-            # activation="selu",
-            # activation="tanh",
-            # recurrent_activation="sigmoid",
-            # recurrent_dropout=0.5,
-            # unroll=FALSE,
-            # use_bias=TRUE,
-        ) %>%
-        # layer_lstm(
-        #     units = lookback * 2,
-        #     input_shape = c(lookback, 1),
-        #     return_sequences = FALSE,
-        #     activation="selu",
-        #     # activation="tanh",
-        #     # recurrent_activation="sigmoid",
-        #     # recurrent_dropout=0.5,
-        #     # unroll=FALSE,
-        #     # use_bias=TRUE,
-        # ) %>%
-        # layer_dense(units=horizon) %>%
-        # Reshape to output of size `horizon`
-        layer_repeat_vector(horizon) %>%
-        layer_lstm(
-            units = horizon,
             return_sequences = TRUE,
+            batch_size = batch_size,
             # activation="selu",
+            kernel_regularizer = regularizer_l1_l2(0.05),  # YES with .01
+            # recurrent_regularizer = regularizer_l1_l2(0.01), # NO
+            bias_regularizer = regularizer_l1_l2(0.05),  # YES with .01
+            # activity_regularizer = regularizer_l1_l2(0.01),
+            kernel_initializer = 'orthogonal'
+            # kernel_regularizer=regularizer_l1_l2(l1 = 0.01, l2 = 0.01),
             # activation="tanh",
             # recurrent_activation="sigmoid",
             # recurrent_dropout=0.5,
             # unroll=FALSE,
             # use_bias=TRUE,
         ) %>%
-        # layer_dense(units=(horizon/2)) %>%
-    
-    time_distributed(keras::layer_dense(units = 1))
-    lstm_model %>%
-        compile(loss = 'mape', optimizer = 'adam', metrics = c('mae', 'mape'))
-    # compile(loss = "mse", optimizer = optimizer_adam(lr = 0.0001))
+        # layer_dense(units=horizon) %>%
+        # # Reshape to output of size `horizon`
+        # layer_repeat_vector(horizon) %>%
+        layer_lstm(
+            units = num_units,
+            return_sequences = TRUE,
+        ) %>%
+        time_distributed(keras::layer_dense(units = 1)) %>%
+        # mse, mae, or mape
+        compile(loss = 'mse', optimizer = optimizer_adam(lr = 0.0001), metrics = c('mae', 'mape'))
     summary(lstm_model)
     
     #### MINE
-    early_stop = callback_early_stopping(monitor = "loss", patience=(0.2 * num_epochs))
+    rlop_loss = callback_reduce_lr_on_plateau(mode="min", monitor="loss", factor=0.05, patience=10)
+    rlop_val = callback_reduce_lr_on_plateau(mode="min", monitor="val_loss", factor=0.05, patience=10)
+    early_stop_loss = callback_early_stopping(monitor = "loss", patience=(0.1 * num_epochs))
+    early_stop_val = callback_early_stopping(monitor = "val_loss", patience=(0.1 * num_epochs))
 
     ### Training
     p("Starting training", NULL)
@@ -261,36 +249,31 @@ lstm <- function(ts_input, h) {
         x = X_train,
         y = y_train,
         epochs = num_epochs,
-        # try varying this
-        batch_size = 1,
+        batch_size = batch_size,
         verbose = 0,
-        shuffle = FALSE,
-        validation_split=.2,
-        callbacks = c(early_stop)
+        shuffle = TRUE,
+        validation_split=.05,
+        callbacks = c(rlop_loss, early_stop_loss)
     )
     plot(train_result)
-    # p("Training complete", NULL)
+    p("Training complete", NULL)
     
 
     #### PREDICT
-    if (build_test) {
-        # Make prediction
-        pred_scaled <- lstm_model %>% predict(X_test, batch_size = 1) %>% .[, , 1]
-        # TODO: unscale with method
-        pred <- pred_scaled * scale_factors[2] + scale_factors[1]
-        
+    pred_scaled <- lstm_model %>% predict(X_test, batch_size = 1) %>% .[, , 1]
+    pred = sapply(pred_scaled, unscale, scale_factors=scale_factors)
+    if (IS_PROD) {
+        pred = sapply(pred_scaled, unscale, scale_factors=scale_factors)
+    } else {
         # Build ts versions
         ts_p_test_scaled = ts(pred_scaled, start=start(ts_y_test_scaled), end=end(ts_y_test_scaled), frequency=frequency(ts_y_test_scaled))
         ts_p_test = ts(pred, start=start(ts_y_test), end=end(ts_y_test), frequency=frequency(ts_y_test))
         
         autoplot(ts_input) + autolayer(ts_train) + autolayer(ts_x_test) + autolayer(ts_y_test) + autolayer(ts_p_test)
         autoplot(ts_input_scaled) + autolayer(ts_train_scaled) + autolayer(ts_x_test_scaled) + autolayer(ts_y_test_scaled) + autolayer(ts_p_test_scaled)
-    } else {
-        # pred_scaled <- lstm_model %>% predict(X_test, batch_size = 1) %>% .[, , 1]
-        
     }
 
-    return(lstm_forecast)
+    return(pred)
 }
 
 benchmark(lstm, usecase = "finance", type = "multi", output = "./results/output.csv")
