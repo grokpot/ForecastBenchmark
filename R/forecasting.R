@@ -1,3 +1,26 @@
+print_output = function(hist, actual, forecast) {
+  print(paste0("Actual: ", actual))
+  print(paste0("Forecast: ", forecast))
+  # Needed in Colab to flush stdout
+  message("")
+  
+  # Reset graphics (plotting)
+  # dev.off()
+  
+  y_min = min(unlist(c(hist, actual, forecast), recursive=FALSE))
+  y_min = y_min - (as.integer(.1 * y_min))
+  y_max = max(unlist(c(hist, actual, forecast), recursive=FALSE))
+  y_max = y_max + (as.integer(.1 * y_max))
+  
+  plot(seq(1, length(hist)), hist, type="o", col="black", pch=".", lty=1, xlim=c(1, (length(hist) + length(actual))), ylim=c(y_min, y_max))
+  
+  x_data = seq((length(hist) + 1), (length(hist) + length(actual)))
+  points(x_data, actual, col="blue", pch="o")
+  lines(x_data, actual, col="blue",lty=2)
+  points(x_data, forecast, col="red", pch="o")
+  lines(x_data, forecast, col="red",lty=2)
+}
+
 #' @description Peforms the forecast of the forecasting method.
 #'
 #' @title Performing the forecasts
@@ -7,7 +30,7 @@
 #' @return The performance measures of the forecasting method.
 evaluation <- function(forecaster, data, type){
   results <- c()
-  for(i in 1:5){
+  for(i in 95:100){
     print(paste("Progress: ", i, "%", sep=""))
     switch(type,
            "one" = {
@@ -105,10 +128,7 @@ forecast.one <- function(forecaster, timeseries){
   # Unifies data
   actual <- as.vector(actual)
   forecast <- as.vector(forecast)
-  print(actual)
-  print(forecast)
-  message(actual)
-  message(forecast)
+  print_output(hist, actual, forecast)
 
   return(calculateMeasures(end, start, hist, forecast, actual, 1))
 }
@@ -135,31 +155,8 @@ forecast.multi <- function(forecaster, timeseries){
   # Unifies data
   actual <- as.vector(actual)
   forecast <- as.vector(forecast)
+  print_output(hist, actual, forecast)
   
-  print(actual)
-  print(forecast)
-  message(actual)
-  message(forecast)
-  
-  # Reset graphics (plotting)
-  # dev.off()
-  
-  y_min = min(unlist(c(hist, actual, forecast), recursive=FALSE))
-  y_min = y_min - (as.integer(.1 * y_min))
-  y_max = max(unlist(c(hist, actual, forecast), recursive=FALSE))
-  y_max = y_max + (as.integer(.1 * y_max))
-  print(y_min)
-  print(y_max)
-  
-  plot(seq(1, length(hist)), hist, type="o", col="black", pch=".", lty=1, xlim=c(1, (length(hist) + length(actual))), ylim=c(y_min, y_max))
-  
-  x_data = seq((length(hist) + 1), (length(hist) + length(actual)))
-  points(x_data, actual, col="blue", pch="o")
-  lines(x_data, actual, col="blue",lty=2)
-  points(x_data, forecast, col="red", pch="o")
-  lines(x_data, forecast, col="red",lty=2)
-
-
   return(calculateMeasures(end, start, hist, forecast, actual, horizon))
 }
 

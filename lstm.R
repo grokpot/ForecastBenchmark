@@ -19,12 +19,19 @@
 DEBUG = TRUE
 IS_COLAB = FALSE
 IS_PROD = TRUE
+TEST_TYPE = "one"
+USE_CASE = "nature"
+
+# Problematic TS:
+# Nature, one, 88
 
 if (IS_COLAB) {
     setwd(".")
+    output_path = "./results/output.csv"
     
 } else {
     setwd("/Users/prater/Dev/ForecastBenchmark")
+    output_path = "/Users/prater/Dev/ForecastBenchmark/results/output.csv"
 }
 source("R/benchmark.R")
 source("R/forecasting.R")
@@ -51,23 +58,29 @@ SCALER = "zscore"
 get_scale_factors <- function(x) {
     if (SCALER == "minmax") {
         return (c(min(x), max(x)))
-    } else {
+    } else if (SCALER == "zscore") {
         return (c(mean(x), sd(x)))
+    } else {
+        return (c(1, 1))
     }
 }
 scale <- function(x, scale_factors) {
     if (SCALER == "minmax") {
         return ((x - scale_factors[1]) / (scale_factors[2] - scale_factors[1]))
-    } else {
+    } else if (SCALER == "zscore") {
         return ((x - scale_factors[1]) / scale_factors[2])
+    } else {
+        return (x)
     }
     
 }
 unscale <- function(x, scale_factors) {
     if (SCALER == "minmax") {
         return (x*(scale_factors[2]-scale_factors[1]) + scale_factors[1])
-    } else {
+    } else if (SCALER == "zscore") {
         return (x * scale_factors[2] + scale_factors[1])
+    } else {
+        return (x)
     }
     
 }
@@ -82,14 +95,6 @@ lstm <- function(ts_input, h) {
     # - epochs: ?
     # - dense layers: ?
     # - activation: `selu` big
-    
-    # TO TEST #
-    # - num units as a fixed number or as a factor of input
-    
-    ## TODO ##
-    # - check if model input is in the correct form (RxC vs CxR)
-    # - try a different use case
-    # - remove internal testing, make sequence 100% training and use validation split
     
     # Reset graphics (plotting)
     # dev.off()
@@ -114,18 +119,24 @@ lstm <- function(ts_input, h) {
     input = as.array(ts_input)
     
     horizon = h
-    lookback = horizon
-    # lookback = as.integer(1*h)
-    # lookback = as.integer(.1 * length(ts_input))
+    if (TEST_TYPE == "one") {
+        lookback = round(length(input) * 0.1)
+    } else {
+        lookback = round(length(input) * 0.1)
+    }
+    # Limit size of lookback
+    lookback = min(lookback, 100)
+    p("Horizon: ", horizon)
+    p("Lookback: ", lookback)
     
     #### BUILD TRAIN
     # Get scale factors
-    split_idx = as.integer(tt_split * length(input))
+    split_idx = round(tt_split * length(input))
     # Scale factors from entire input
-    scale_factors <- get_scale_factors(input[1:length(input)])
+    # scale_factors <- get_scale_factors(input[1:length(input)])
     # Scale factors from training data
-    # scale_factors <- get_scale_factors(input[1:split_idx])
-
+    scale_factors <- get_scale_factors(input[1:split_idx])
+    
     # Create scaled versions of input data    
     ts_input_scaled = ts(sapply(input, scale, scale_factors=scale_factors), start=start(ts_input), end=end(ts_input), frequency=frequency(ts_input))
     input_scaled = as.array(ts_input_scaled)
@@ -135,10 +146,13 @@ lstm <- function(ts_input, h) {
     train = as.array(ts_train)
     ts_train_scaled = subset(ts_input_scaled, start=1, end=split_idx)
     train_scaled = as.array(ts_train_scaled)
-
-    # Determine number of samples
-    train_idxs <- seq(1, split_idx, length.out=(2*length(input)))
-    # train_idxs <- seq(1, split_idx, by=(as.integer(0.01 * length(ts_input))))
+    
+    # Num samples is fraction of lookback, minimum 1
+    num_samples = max(round(0.1 * length(input)), 1)
+    # Limit num samples
+    num_samples = min(num_samples, 1000)
+    # `num_samples` of equally spaced samples
+    train_idxs <- seq(1, split_idx, length.out=num_samples)
     
     train_mtx<- matrix(nrow = length(train_idxs), ncol = (lookback + horizon))
     for (i in 1:length(train_idxs)){
@@ -151,13 +165,12 @@ lstm <- function(ts_input, h) {
         train_mtx <- na.omit(train_mtx)
     }
     # Split data into input (X) and output (y)
-    X_train = train_mtx[,1:lookback]
+    X_train = as.matrix(train_mtx[,1:lookback])
     stopifnot(ncol(X_train) == lookback)
     X_train = array(X_train, dim=c(nrow(X_train), ncol(X_train), 1))
-    y_train = train_mtx[,(lookback+1):ncol(train_mtx)]
+    y_train = as.matrix(train_mtx[,(lookback+1):ncol(train_mtx)])
     stopifnot(ncol(y_train) == horizon)
     y_train = array(y_train, dim=c(nrow(y_train), ncol(y_train), 1))
-    p("Num samples: ", nrow(X_train))
     
     #### BUILD TEST
     if (IS_PROD) {
@@ -195,27 +208,54 @@ lstm <- function(ts_input, h) {
         data = x_test_scaled,
         dim = c(1, lookback, 1)
     )
- 
-    #### Model Definition
+    
+    #### Model Parameterization
     # https://stackoverflow.com/questions/38714959/understanding-keras-lstms
     # https://keras.io/api/layers/activations/
     # https://stackoverflow.com/questions/53663407/keras-lstm-different-input-output-shape
-    num_epochs = 300
+    num_epochs = 50
     num_units = 64
-    batch_size = 1 # lower = better accuracy
-    lstm_model <- keras_model_sequential()
+    
+    # Batch size: lower = better accuracy but slower
+    batch_size = 32
+    
+    # # Limit number of samples
+    # max_num_samples = 10000
+    # if (nrow(X_train) > max_num_samples) {
+    #     X_train = as.matrix(X_train[1:max_num_samples,,])
+    #     X_train = array(X_train, dim=c(nrow(X_train), ncol(X_train), 1))
+    #     y_train = as.matrix(y_train[1:max_num_samples,,])
+    #     y_train = array(y_train, dim=c(nrow(y_train), ncol(y_train), 1))
+    # }
+    
+    # Make batch size a factor of sample size
+    if (nrow(X_train) <= batch_size) {
+        batch_size = 1
+        num_batches = (nrow(X_train) %/% batch_size)
+    } else {
+        num_batches = (nrow(X_train) %/% batch_size)
+        X_train = as.matrix(X_train[1:(num_batches * batch_size),,])
+        X_train = array(X_train, dim=c(nrow(X_train), ncol(X_train), 1))
+        y_train = as.matrix(y_train[1:(num_batches * batch_size),,])
+        y_train = array(y_train, dim=c(nrow(y_train), ncol(y_train), 1))
+    }
+    p("Num epochs: ", num_epochs)
+    p("Num units: ", num_units)
+    p("Num samples: ", nrow(X_train))
+    p("Batch size: ", batch_size)
+    p("Num batches: ", num_batches)
     
     #### ENCODER / DECODER
+    lstm_model <- keras_model_sequential()
     lstm_model %>%
         layer_lstm(
             units = num_units,
             input_shape = c(lookback, 1),
             return_sequences = TRUE,
-            batch_size = batch_size,
             # activation="selu",
-            kernel_regularizer = regularizer_l1_l2(0.05),  # YES with .01
+            kernel_regularizer = regularizer_l1(0.1),  # YES with .01
             # recurrent_regularizer = regularizer_l1_l2(0.01), # NO
-            bias_regularizer = regularizer_l1_l2(0.05),  # YES with .01
+            bias_regularizer = regularizer_l1(0.1),  # YES with .01
             # activity_regularizer = regularizer_l1_l2(0.01),
             kernel_initializer = 'orthogonal'
             # kernel_regularizer=regularizer_l1_l2(l1 = 0.01, l2 = 0.01),
@@ -225,24 +265,29 @@ lstm <- function(ts_input, h) {
             # unroll=FALSE,
             # use_bias=TRUE,
         ) %>%
+        layer_lstm(
+            units = num_units,
+            input_shape = c(lookback, 1),
+            return_sequences = FALSE,
+        ) %>%
         # layer_dense(units=horizon) %>%
         # # Reshape to output of size `horizon`
-        # layer_repeat_vector(horizon) %>%
+        layer_repeat_vector(horizon) %>%
         layer_lstm(
             units = num_units,
             return_sequences = TRUE,
         ) %>%
         time_distributed(keras::layer_dense(units = 1)) %>%
         # mse, mae, or mape
-        compile(loss = 'mse', optimizer = optimizer_adam(lr = 0.0001), metrics = c('mae', 'mape'))
+        compile(loss = 'mse', optimizer = optimizer_adam(lr = 0.001), metrics = c('mae', 'mape'))
     summary(lstm_model)
     
     #### MINE
     rlop_loss = callback_reduce_lr_on_plateau(mode="min", monitor="loss", factor=0.05, patience=10)
     rlop_val = callback_reduce_lr_on_plateau(mode="min", monitor="val_loss", factor=0.05, patience=10)
-    early_stop_loss = callback_early_stopping(monitor = "loss", patience=(0.1 * num_epochs))
-    early_stop_val = callback_early_stopping(monitor = "val_loss", patience=(0.1 * num_epochs))
-
+    early_stop_loss = callback_early_stopping(monitor = "loss", patience=15)
+    early_stop_val = callback_early_stopping(monitor = "val_loss", patience=15)
+    
     ### Training
     p("Starting training", NULL)
     train_result = lstm_model %>% fit(
@@ -252,13 +297,13 @@ lstm <- function(ts_input, h) {
         batch_size = batch_size,
         verbose = 0,
         shuffle = TRUE,
-        validation_split=.05,
+        validation_split=.1,
         callbacks = c(rlop_loss, early_stop_loss)
     )
     plot(train_result)
     p("Training complete", NULL)
     
-
+    
     #### PREDICT
     pred_scaled <- lstm_model %>% predict(X_test, batch_size = 1) %>% .[, , 1]
     pred = sapply(pred_scaled, unscale, scale_factors=scale_factors)
@@ -272,8 +317,8 @@ lstm <- function(ts_input, h) {
         autoplot(ts_input) + autolayer(ts_train) + autolayer(ts_x_test) + autolayer(ts_y_test) + autolayer(ts_p_test)
         autoplot(ts_input_scaled) + autolayer(ts_train_scaled) + autolayer(ts_x_test_scaled) + autolayer(ts_y_test_scaled) + autolayer(ts_p_test_scaled)
     }
-
+    
     return(pred)
 }
 
-benchmark(lstm, usecase = "finance", type = "multi", output = "./results/output.csv")
+benchmark(lstm, usecase = USE_CASE, type = TEST_TYPE, output = output_path)
