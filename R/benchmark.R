@@ -181,3 +181,66 @@ benchmark <- function(forecaster, usecase, type = "one", output="benchmark.csv",
   write.table(result,file=output,sep = ";", col.names=NA)
 
 }
+
+plot_values = function(df, maxval, title, ylabel, xlabel) {
+  # https://stackoverflow.com/a/29463136
+  library("dplyr")
+  library("grid") # needed for arrow() function
+  
+  df = stack(df)
+  p = ggplot(df, aes(x=ind, y=values)) + 
+    xlab(xlabel) + 
+    ylab(ylabel) + 
+    ggtitle(title) + 
+    theme(plot.title = element_text(hjust = 0.5))
+  # p + geom_boxplot()
+  
+  
+  dd <- df %>% filter(values>maxval) %>%
+    group_by(ind) %>%
+    summarise(outlier_txt=paste(values, collapse=", "))
+  # p
+  
+  
+  p2 <- p + geom_boxplot() +
+    scale_y_continuous(limits=c(min(df$values),maxval))+
+    geom_text(data=dd,aes(y=maxval,label=outlier_txt),
+              size=3,vjust=-3.5,hjust=0.5)+
+    geom_segment(data=dd,aes(y=maxval*0.95,yend=maxval,
+                             xend=ind),
+                 arrow = arrow(length = unit(0.3,"cm")))
+  p2
+}
+
+plot_metadata = function(type){
+  library(ggplot2)
+  
+  datasets = list(economics, finance, human_access, nature_and_demographic)
+  c_total_lengths = c()
+  c_hist_lengths = c()
+  c_horizons = c()
+  for(d in datasets) {
+    total_lengths = c()
+    hist_lengths = c()
+    horizons = c()
+    for(i in 1:100){
+      total_lengths = c(total_lengths, length(d[[i]]))
+      hist_length = (ceiling(length(d[[i]]) * 0.8))
+      hist_lengths = c(hist_lengths, hist_length)
+      horizons = c(horizons, length(d[[i]]) - hist_length)
+    }
+    c_total_lengths = c(c_total_lengths, list(total_lengths))
+    c_hist_lengths = c(c_hist_lengths, list(hist_lengths))
+    c_horizons = c(c_horizons, list(horizons))
+  }
+  usecase_names = c("Economics", "Finance", "Human", "Nature")
+  df_total_lengths = setNames(data.frame(c_total_lengths), usecase_names)
+  df_hist_lengths = setNames(data.frame(c_hist_lengths), usecase_names)
+  df_horizons = setNames(data.frame(c_horizons), usecase_names)
+  
+  # ggplot(stack(df_horizons), aes(x=ind, y=values)) + geom_violin()
+  # plot_values(df_total_lengths, 15000)
+  plot_values(df_hist_lengths, 13000, "History Length vs Use Case", "History Length", "Use Case")
+  # plot_values(df_horizons, 2500)
+}
+plot_metadata("one")
