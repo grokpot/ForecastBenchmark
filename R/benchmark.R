@@ -240,7 +240,7 @@ plot_metadata = function(type){
   
   # ggplot(stack(df_horizons), aes(x=ind, y=values)) + geom_violin()
   # plot_values(df_total_lengths, 15000)
-  plot_values(df_hist_lengths, 13000, "History Length vs Use Case", "History Length", "Use Case")
-  # plot_values(df_horizons, 2500)
+  # plot_values(df_hist_lengths, 13000, "History Length vs Use Case", "History Length", "Use Case")
+  plot_values(df_horizons, 2500, "Horizon Length vs Use Case for Multi-Evaluation", "Horizon Length", "Use Case")
 }
-plot_metadata("one")
+# plot_metadata("one")

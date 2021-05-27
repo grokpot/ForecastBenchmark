@@ -19,12 +19,16 @@
 DEBUG = TRUE
 IS_COLAB = FALSE
 IS_PROD = TRUE
-TEST_TYPE = "one"
+TEST_TYPE = "multi"
 USE_CASE = "nature"
 
 # Problematic TS:
 # Nature, one, 15
 # Nature, one, 88
+# Economics, one, 21
+# Finance, one, 2
+# Human, multi, 6
+# Finance, multi, 99
 
 if (IS_COLAB) {
     setwd(".")
@@ -153,7 +157,7 @@ lstm <- function(ts_input, h) {
     # Limit num samples
     num_samples = min(num_samples, 1000)
     # `num_samples` of equally spaced samples
-    train_idxs <- seq(1, split_idx, length.out=num_samples)
+    train_idxs <- seq(1, (split_idx - lookback - horizon), length.out=num_samples)
     
     train_mtx<- matrix(nrow = length(train_idxs), ncol = (lookback + horizon))
     for (i in 1:length(train_idxs)){
@@ -214,27 +218,23 @@ lstm <- function(ts_input, h) {
     # https://stackoverflow.com/questions/38714959/understanding-keras-lstms
     # https://keras.io/api/layers/activations/
     # https://stackoverflow.com/questions/53663407/keras-lstm-different-input-output-shape
-    num_epochs = 50
-    num_units = 64
-    
     # Batch size: lower = better accuracy but slower
-    batch_size = 32
-    
-    # # Limit number of samples
-    # max_num_samples = 10000
-    # if (nrow(X_train) > max_num_samples) {
-    #     X_train = as.matrix(X_train[1:max_num_samples,,])
-    #     X_train = array(X_train, dim=c(nrow(X_train), ncol(X_train), 1))
-    #     y_train = as.matrix(y_train[1:max_num_samples,,])
-    #     y_train = array(y_train, dim=c(nrow(y_train), ncol(y_train), 1))
-    # }
+    num_epochs = 50
+    if (TEST_TYPE == "one") {
+        num_units = 64
+        batch_size = 32
+    } else {
+        num_units = 16   
+        batch_size = nrow(X_train)
+    }
     
     # Make batch size a factor of sample size
-    if (nrow(X_train) <= batch_size) {
+    if (nrow(X_train) < batch_size) {
         batch_size = 1
-        num_batches = (nrow(X_train) %/% batch_size)
-    } else {
-        num_batches = (nrow(X_train) %/% batch_size)
+    }
+    num_batches = (nrow(X_train) %/% batch_size)
+    # Split samples
+    if ((batch_size != 1) & (batch_size != nrow(X_train))) {
         X_train = as.matrix(X_train[1:(num_batches * batch_size),,])
         X_train = array(X_train, dim=c(nrow(X_train), ncol(X_train), 1))
         y_train = as.matrix(y_train[1:(num_batches * batch_size),,])
