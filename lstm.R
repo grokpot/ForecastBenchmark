@@ -19,8 +19,24 @@
 DEBUG = TRUE
 IS_COLAB = FALSE
 IS_PROD = TRUE
-TEST_TYPE = "multi"
-USE_CASE = "nature"
+TEST_TYPE = "one"
+USE_CASE = "economics"
+NUM_SAMPLES = 100
+LOOKBACK_SCALE_FACTOR = 0.1
+LOOKBACK_MAX = 256
+NUM_EPOCHS = 16
+NUM_UNITS_ENCODER = 16
+NUM_UNITS_DECODER_FACTOR = .5
+BATCH_SIZE = 32
+LOSS_FUNCTION = 'mse'
+ADAM_LEARNING_RATE = 0.001
+LEARNING_RATE_REDUCTION = 0.01
+LEARNING_RATE_PATIENCE = 2
+EARLY_STOPPING_PATIENCE = 10
+EARLY_STOPPING_MIN_DELTA = 1
+TRAINING_VERBOSITY = 1
+SHUFFLE_TRAINING_DATA = TRUE
+VALIDATION_SPLIT = 0.1
 
 # Problematic TS:
 # Nature, one, 15
@@ -28,7 +44,11 @@ USE_CASE = "nature"
 # Economics, one, 21
 # Finance, one, 2
 # Human, multi, 6
+# Finance, multi, 1
 # Finance, multi, 99
+
+# Easy TS:
+# Economics, multi, 99
 
 if (IS_COLAB) {
     setwd(".")
@@ -124,13 +144,10 @@ lstm <- function(ts_input, h) {
     input = as.array(ts_input)
     
     horizon = h
-    if (TEST_TYPE == "one") {
-        lookback = round(length(input) * 0.1)
-    } else {
-        lookback = round(length(input) * 0.1)
-    }
+    
+    lookback = round(length(input) * LOOKBACK_SCALE_FACTOR)
     # Limit size of lookback
-    lookback = min(lookback, 100)
+    lookback = min(lookback, LOOKBACK_MAX)
     p("Horizon: ", horizon)
     p("Lookback: ", lookback)
     
@@ -152,14 +169,10 @@ lstm <- function(ts_input, h) {
     ts_train_scaled = subset(ts_input_scaled, start=1, end=split_idx)
     train_scaled = as.array(ts_train_scaled)
     
-    # Num samples is fraction of lookback, minimum 1
-    num_samples = max(round(0.1 * length(input)), 1)
-    # Limit num samples
-    num_samples = min(num_samples, 1000)
-    # `num_samples` of equally spaced samples
+    num_samples = NUM_SAMPLES
     train_idxs <- seq(1, (split_idx - lookback - horizon), length.out=num_samples)
     
-    train_mtx<- matrix(nrow = length(train_idxs), ncol = (lookback + horizon))
+    train_mtx <- matrix(nrow = length(train_idxs), ncol = (lookback + horizon))
     for (i in 1:length(train_idxs)){
         train_mtx[i,] <- input_scaled[train_idxs[i]:(train_idxs[i] + (lookback + horizon) - 1)]
     }
@@ -219,38 +232,30 @@ lstm <- function(ts_input, h) {
     # https://keras.io/api/layers/activations/
     # https://stackoverflow.com/questions/53663407/keras-lstm-different-input-output-shape
     # Batch size: lower = better accuracy but slower
-    num_epochs = 50
-    if (TEST_TYPE == "one") {
-        num_units = 64
-        batch_size = 32
-    } else {
-        num_units = 16   
-        batch_size = nrow(X_train)
-    }
-    
+
     # Make batch size a factor of sample size
-    if (nrow(X_train) < batch_size) {
-        batch_size = 1
+    if (nrow(X_train) < BATCH_SIZE) {
+        BATCH_SIZE = 1
     }
-    num_batches = (nrow(X_train) %/% batch_size)
+    num_batches = (nrow(X_train) %/% BATCH_SIZE)
     # Split samples
-    if ((batch_size != 1) & (batch_size != nrow(X_train))) {
-        X_train = as.matrix(X_train[1:(num_batches * batch_size),,])
+    if ((BATCH_SIZE != 1) & (BATCH_SIZE != nrow(X_train))) {
+        X_train = as.matrix(X_train[1:(num_batches * BATCH_SIZE),,])
         X_train = array(X_train, dim=c(nrow(X_train), ncol(X_train), 1))
-        y_train = as.matrix(y_train[1:(num_batches * batch_size),,])
+        y_train = as.matrix(y_train[1:(num_batches * BATCH_SIZE),,])
         y_train = array(y_train, dim=c(nrow(y_train), ncol(y_train), 1))
     }
-    p("Num epochs: ", num_epochs)
-    p("Num units: ", num_units)
+    p("Num epochs: ", NUM_EPOCHS)
+    p("Num units: ", NUM_UNITS_ENCODER)
     p("Num samples: ", nrow(X_train))
-    p("Batch size: ", batch_size)
+    p("Batch size: ", BATCH_SIZE)
     p("Num batches: ", num_batches)
     
     #### ENCODER / DECODER
     lstm_model <- keras_model_sequential()
     lstm_model %>%
         layer_lstm(
-            units = num_units,
+            units = NUM_UNITS_ENCODER,
             input_shape = c(lookback, 1),
             return_sequences = TRUE,
             # activation="selu",
@@ -267,7 +272,7 @@ lstm <- function(ts_input, h) {
             # use_bias=TRUE,
         ) %>%
         layer_lstm(
-            units = num_units,
+            units = (NUM_UNITS_ENCODER * NUM_UNITS_DECODER_FACTOR),
             input_shape = c(lookback, 1),
             return_sequences = FALSE,
         ) %>%
@@ -275,31 +280,33 @@ lstm <- function(ts_input, h) {
         # # Reshape to output of size `horizon`
         layer_repeat_vector(horizon) %>%
         layer_lstm(
-            units = num_units,
+            units = (NUM_UNITS_ENCODER * NUM_UNITS_DECODER_FACTOR),
             return_sequences = TRUE,
         ) %>%
         time_distributed(keras::layer_dense(units = 1)) %>%
         # mse, mae, or mape
-        compile(loss = 'mse', optimizer = optimizer_adam(lr = 0.001), metrics = c('mae', 'mape'))
+        compile(loss = LOSS_FUNCTION, optimizer = optimizer_adam(lr = ADAM_LEARNING_RATE), metrics = c('mae', 'mape'))
     summary(lstm_model)
     
     #### MINE
-    rlop_loss = callback_reduce_lr_on_plateau(mode="min", monitor="loss", factor=0.05, patience=10)
-    rlop_val = callback_reduce_lr_on_plateau(mode="min", monitor="val_loss", factor=0.05, patience=10)
-    early_stop_loss = callback_early_stopping(monitor = "loss", patience=15)
-    early_stop_val = callback_early_stopping(monitor = "val_loss", patience=15)
+    rlop_loss = callback_reduce_lr_on_plateau(mode="min", monitor="loss", factor=LEARNING_RATE_REDUCTION, patience=LEARNING_RATE_PATIENCE)
+    rlop_val = callback_reduce_lr_on_plateau(mode="min", monitor="val_loss", factor=LEARNING_RATE_REDUCTION, patience=LEARNING_RATE_PATIENCE)
+    early_stop_loss = callback_early_stopping(mode="min", monitor = "loss", min_delta=EARLY_STOPPING_MIN_DELTA, patience=EARLY_STOPPING_PATIENCE)
+    early_stop_val = callback_early_stopping(mode="min", monitor = "val_loss", min_delta=EARLY_STOPPING_MIN_DELTA, patience=EARLY_STOPPING_PATIENCE)
     
     ### Training
     p("Starting training", NULL)
     train_result = lstm_model %>% fit(
         x = X_train,
         y = y_train,
-        epochs = num_epochs,
-        batch_size = batch_size,
-        verbose = 0,
-        shuffle = TRUE,
-        validation_split=.1,
-        callbacks = c(rlop_loss, early_stop_loss)
+        epochs = NUM_EPOCHS,
+        batch_size = BATCH_SIZE,
+        verbose = TRAINING_VERBOSITY,
+        shuffle = SHUFFLE_TRAINING_DATA,
+        validation_split=VALIDATION_SPLIT,
+        callbacks = c(rlop_loss, early_stop_loss),
+        use_multiprocessing = TRUE,
+        workers = 3
     )
     plot(train_result)
     p("Training complete", NULL)

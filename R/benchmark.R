@@ -184,15 +184,16 @@ benchmark <- function(forecaster, usecase, type = "one", output="benchmark.csv",
 
 plot_values = function(df, maxval, title, ylabel, xlabel) {
   # https://stackoverflow.com/a/29463136
-  library("dplyr")
-  library("grid") # needed for arrow() function
-  
   df = stack(df)
   p = ggplot(df, aes(x=ind, y=values)) + 
     xlab(xlabel) + 
     ylab(ylabel) + 
     ggtitle(title) + 
-    theme(plot.title = element_text(hjust = 0.5))
+    theme(
+      plot.title = element_text(hjust=0.5, size=14),
+      axis.title = element_text(size=14),
+      axis.text = element_text(size=12)
+    )
   # p + geom_boxplot()
   
   
@@ -205,8 +206,8 @@ plot_values = function(df, maxval, title, ylabel, xlabel) {
   p2 <- p + geom_boxplot() +
     scale_y_continuous(limits=c(min(df$values),maxval))+
     geom_text(data=dd,aes(y=maxval,label=outlier_txt),
-              size=3,vjust=-3.5,hjust=0.5)+
-    geom_segment(data=dd,aes(y=maxval*0.95,yend=maxval,
+              size=2,vjust=-2.5,hjust=0.5)+
+    geom_segment(data=dd,aes(y=maxval*0.85,yend=maxval,
                              xend=ind),
                  arrow = arrow(length = unit(0.3,"cm")))
   p2
@@ -216,6 +217,8 @@ plot_metadata = function(type){
   library(ggplot2)
   
   datasets = list(economics, finance, human_access, nature_and_demographic)
+  c_avg_lengths = c()
+  c_avg_first_x = c()
   c_total_lengths = c()
   c_hist_lengths = c()
   c_horizons = c()
@@ -225,22 +228,29 @@ plot_metadata = function(type){
     horizons = c()
     for(i in 1:100){
       total_lengths = c(total_lengths, length(d[[i]]))
-      hist_length = (ceiling(length(d[[i]]) * 0.8))
+      hist_length = (ceiling(length(d[[i]]) * 0.80))
       hist_lengths = c(hist_lengths, hist_length)
       horizons = c(horizons, length(d[[i]]) - hist_length)
     }
+    c_avg_lengths = c(c_avg_lengths, list(median(total_lengths)))
+    c_avg_first_x = c(c_avg_first_x, list(median(total_lengths[10:20])))
     c_total_lengths = c(c_total_lengths, list(total_lengths))
     c_hist_lengths = c(c_hist_lengths, list(hist_lengths))
     c_horizons = c(c_horizons, list(horizons))
   }
   usecase_names = c("Economics", "Finance", "Human", "Nature")
+  df_avg_lengths = setNames(data.frame(c_avg_lengths), usecase_names)
+  df_avg_first_x_lengths = setNames(data.frame(c_avg_first_x), usecase_names)
   df_total_lengths = setNames(data.frame(c_total_lengths), usecase_names)
   df_hist_lengths = setNames(data.frame(c_hist_lengths), usecase_names)
   df_horizons = setNames(data.frame(c_horizons), usecase_names)
   
-  # ggplot(stack(df_horizons), aes(x=ind, y=values)) + geom_violin()
-  # plot_values(df_total_lengths, 15000)
-  # plot_values(df_hist_lengths, 13000, "History Length vs Use Case", "History Length", "Use Case")
-  plot_values(df_horizons, 2500, "Horizon Length vs Use Case for Multi-Evaluation", "Horizon Length", "Use Case")
+  print("Mean lengths:")
+  print(df_avg_lengths)
+  print("Mean lengths of first X time series:")
+  print(df_avg_first_x_lengths)
+  plot_values(df_horizons, 2000, "Horizon Length vs Use Case for Multi-Evaluation", "Horizon Length", "Use Case")
 }
-# plot_metadata("one")
+library("dplyr")
+library("grid") # needed for arrow() function
+plot_metadata("one")

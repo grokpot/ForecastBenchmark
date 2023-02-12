@@ -30,7 +30,7 @@ print_output = function(hist, actual, forecast) {
 #' @return The performance measures of the forecasting method.
 evaluation <- function(forecaster, data, type){
   results <- c()
-  for(i in 1:100){
+  for(i in 1:10){
     print(paste("Progress: ", i, "%", sep=""))
     switch(type,
            "one" = {
